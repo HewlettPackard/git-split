@@ -1,0 +1,198 @@
+#!/usr/bin/python
+
+from optparse import OptionParser
+import git
+import os
+import shutil
+import re
+
+# override the default execute method of the git class with a custom one that permits
+# a callback to process the command output and provide feedback to the caller
+def override_execute(self, command,
+                istream=None,
+                with_keep_cwd=False,
+                with_extended_output=False,
+                with_exceptions=True,
+                with_raw_output=False,
+                callback=None,
+                ):
+        """
+        Handles executing the command on the shell and consumes and returns
+        the returned information (stdout)
+
+        ``command``
+            The command argument list to execute
+
+        ``istream``
+            Standard input filehandle passed to subprocess.Popen.
+
+        ``with_keep_cwd``
+            Whether to use the current working directory from os.getcwd().
+            GitPython uses get_work_tree() as its working directory by
+            default and get_git_dir() for bare repositories.
+
+        ``with_extended_output``
+            Whether to return a (status, stdout, stderr) tuple.
+
+        ``with_exceptions``
+            Whether to raise an exception when git returns a non-zero status.
+
+        ``with_raw_output``
+            Whether to avoid stripping off trailing whitespace.
+
+        Returns
+            str(output)                     # extended_output = False (Default)
+            tuple(int(status), str(output)) # extended_output = True
+        """
+
+        if GIT_PYTHON_TRACE and not GIT_PYTHON_TRACE == 'full':
+            print ' '.join(command)
+
+        # Allow the user to have the command executed in their working dir.
+        if with_keep_cwd or self.git_dir is None:
+          cwd = os.getcwd()
+        else:
+          cwd=self.git_dir
+
+        # Start the process
+        proc = subprocess.Popen(command,
+                                cwd=cwd,
+                                stdin=istream,
+                                stderr=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                **extra
+                                )
+
+        # Wait for the process to return
+        try:
+            if callback:
+                callback(proc.stdout, proc.stderr)
+            stdout_value = proc.stdout.read()
+            stderr_value = proc.stderr.read()
+            status = proc.wait()
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
+
+        # Strip off trailing whitespace by default
+        if not with_raw_output:
+            stdout_value = stdout_value.rstrip()
+            stderr_value = stderr_value.rstrip()
+
+        if with_exceptions and status != 0:
+            raise GitCommandError(command, status, stderr_value)
+
+        if GIT_PYTHON_TRACE == 'full':
+            if stderr_value:
+              print "%s -> %d: '%s' !! '%s'" % (command, status, stdout_value, stderr_value)
+            elif stdout_value:
+              print "%s -> %d: '%s'" % (command, status, stdout_value)
+            else:
+              print "%s -> %d" % (command, status)
+
+        # Allow access to the command's status code
+        if with_extended_output:
+            return (status, stdout_value, stderr_value)
+        else:
+            return stdout_value
+
+# monkey patch the python git class method git.cmd.Git.execute
+import subprocess
+from git.errors import GitCommandError
+GIT_PYTHON_TRACE = git.cmd.GIT_PYTHON_TRACE
+extra = git.cmd.extra
+git.cmd.execute_kwargs = ('callback',) + git.cmd.execute_kwargs
+git.cmd.Git.execute = override_execute
+
+
+def git_progress(stdout, stderr):
+
+    regex = re.compile("^Rewrite.*")
+    while True:
+        next_line = stdout.readline()
+        if not next_line:
+            break
+        if regex.match(next_line):
+            print next_line
+
+    while True:
+        next_line = stderr.readline()
+        if not next_line:
+            break
+        print next_line
+
+    return
+
+
+if __name__ == '__main__':
+    parser = OptionParser(version='%prog 1.0', usage='''
+Usage: %%prog [options] [args]
+
+'''.strip('\n'))
+
+    local_clone = os.path.expanduser("~/git/localrepo")
+    new_repo = os.path.expanduser("~/git/newrepo")
+    paths_to_include = []
+
+    src_repo = git.Repo(local_clone)
+    assert src_repo.bare == False
+
+    if os.path.isdir(new_repo):
+        print "Existing copy found, removing to start from fresh"
+        shutil.rmtree(new_repo)
+
+    print "Cloning local repo to new path"
+    src_repo.git.clone("file://" + local_clone, new_repo)
+    cloned_repo = git.Repo(new_repo)
+
+    filelist = []
+
+    # make sure the git commands are run on the correct repo
+    os.chdir(new_repo)
+    branches = ["origin/master", "origin/develop"]
+    print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
+    print "\n".join(paths_to_include)
+    print
+
+    # remove files not needed in the new repo
+    print cloned_repo.git.git_dir
+    cloned_repo.git.filter_branch("--index-filter", "git rm -rf --cached --ignore-unmatch %s" % ' '.join(filelist),
+                                  "-f",
+                                  *branches,
+                                  callback=git_progress)
+
+    # remove empty commits
+    print "Generate revs list to process"
+    proc1 = subprocess.Popen(["git", "rev-list", "HEAD"],
+                            cwd=cloned_repo.git.git_dir,
+                            stdin=None,
+                            stderr=subprocess.PIPE,
+                            stdout=subprocess.PIPE)
+
+    proc2 = subprocess.Popen(["/bin/bash", "-c", "while read c; do [ -n \"$(git diff-tree --root $c)\" ] || echo $c; done > revs"],
+                            cwd=cloned_repo.git.git_dir,
+                            stdin=proc1.stdout,
+                            stderr=subprocess.PIPE,
+                            stdout=subprocess.PIPE)
+                             
+    try:
+        stderr_value1 = proc1.stderr.read()
+        stdout_value2 = proc2.stdout.read()
+        stderr_value2 = proc2.stderr.read()
+        status1 = proc1.wait()
+        status2 = proc2.wait()
+    finally:
+        proc1.stdout.close()
+        proc1.stderr.close()
+        proc2.stdout.close()
+        proc2.stderr.close()
+
+    if status1 != 0 or status2 !=0:
+        raise RuntimeException("Problem getting list of empty commits: %s\n%s" % (stderr_value1, stderr_value2))
+
+    print "start filtering branches \"%s\" for empty commits" % branches
+    cloned_repo.git.filter_branch("--commit-filter",
+                                  "if grep -q \"$GIT_COMMIT\" %s/revs; then skip_commit \"$@\"; else git commit-tree \"$@\"; fi" %
+                                        cloned_repo.git.git_dir,
+                                  "-f",
+                                  *branches)
