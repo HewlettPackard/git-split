@@ -141,7 +141,7 @@ def git_output_process(proc):
     tstderr.start()
 
     commit_regex = re.compile("^Rewrite [a-z0-9]{40} \((([^\/]*)\/([^\)]*))\)")
-    files_removed_regex = re.compile("rm '([^']*)'")
+    files_removed_regex = re.compile(".*rm '([^']*)'$")
     print "Processing commit:",
 
     string_len = 0
