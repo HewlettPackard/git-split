@@ -6,6 +6,18 @@ import os, sys, fcntl
 import shutil
 import re
 
+
+# necessary imports for the overrided execute method to work as expected
+import subprocess
+from git.errors import GitCommandError
+GIT_PYTHON_TRACE = git.cmd.GIT_PYTHON_TRACE
+extra = git.cmd.extra
+ON_POSIX = 'posix' in sys.builtin_module_names
+extra.update({'close_fds': ON_POSIX,
+              'bufsize': 1,
+             })
+git.cmd.execute_kwargs = ('callback',) + git.cmd.execute_kwargs
+
 # override the default execute method of the git class with a custom one that permits
 # a callback to process the command output and provide feedback to the caller
 def execute(self, command,
@@ -40,9 +52,13 @@ def execute(self, command,
         ``with_raw_output``
             Whether to avoid stripping off trailing whitespace.
 
+        ``callback``
+            User supplied callback to handle data processing
+
         Returns
             str(output)                     # extended_output = False (Default)
             tuple(int(status), str(output)) # extended_output = True
+            callback                            # callback != None
         """
 
         if GIT_PYTHON_TRACE and not GIT_PYTHON_TRACE == 'full':
@@ -63,10 +79,12 @@ def execute(self, command,
                                 **extra
                                 )
 
+        # if the user supplied a callback, use that instead.
+        if callback:
+            return(callback(proc))
+
         # Wait for the process to return
         try:
-            if callback:
-                callback(proc)
             stdout_value = proc.stdout.read()
             stderr_value = proc.stderr.read()
             status = proc.wait()
@@ -96,14 +114,7 @@ def execute(self, command,
         else:
             return stdout_value
 
-# monkey patch the python git class method git.cmd.Git.execute
-import subprocess
-from git.errors import GitCommandError
-GIT_PYTHON_TRACE = git.cmd.GIT_PYTHON_TRACE
-extra = git.cmd.extra
-ON_POSIX = 'posix' in sys.builtin_module_names
-extra.update({'close_fds': ON_POSIX})
-git.cmd.execute_kwargs = ('callback',) + git.cmd.execute_kwargs
+# monkey patch the git.execute_process method
 git.cmd.Git.execute = execute
 
 
@@ -186,7 +197,6 @@ Usage: %%prog [options] [args]
     print "\n".join(paths_to_include)
     print
 
-    # remove files not needed in the new repo
     cloned_repo.git.filter_branch("--index-filter",
                                   '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached''' % ' '.join(['''-e \"%s\"''' % p for p in paths_to_include]),
                                   "--commit-filter",'''
