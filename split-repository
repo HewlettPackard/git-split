@@ -2,7 +2,7 @@
 
 from optparse import OptionParser
 import git
-import os, sys, fcntl
+import os, sys
 import shutil
 import re
 
@@ -118,53 +118,70 @@ def execute(self, command,
 git.cmd.Git.execute = execute
 
 
-def git_progress(proc):
+from threading  import Thread
+try:
+    from Queue import Queue, Empty
+except ImportError:
+    from queue import Queue, Empty
 
-    # force unbuffered input
-    for ostream in [proc.stdout, proc.stderr]:
-        fd = ostream.fileno()
-        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+def git_output_process(proc):
+    def enqueue_output(out, queue):
+        for line in iter(out.readline, b''):
+            queue.put(line)
+        out.close()
 
-    regex = re.compile("^Rewrite [a-z0-9]{40} \((([^\/]*)\/([^\)]*))\)")
+    qstdout = Queue()
+    tstdout = Thread(target=enqueue_output, args=(proc.stdout, qstdout))
+    tstdout.daemon = True # thread dies with the program
+    tstdout.start()
+
+    qstderr = Queue()
+    tstderr = Thread(target=enqueue_output, args=(proc.stderr, qstderr))
+    tstderr.daemon = True # thread dies with the program
+    tstderr.start()
+
+    commit_regex = re.compile("^Rewrite [a-z0-9]{40} \((([^\/]*)\/([^\)]*))\)")
+    files_removed_regex = re.compile("rm '([^']*)'")
     print "Processing commit:",
+
     string_len = 0
-    indexend = False
+    files_removed = []
     while proc.poll() == None:
+        # stdout
         try:
-            next_err_line = proc.stderr.readline()
-            if next_err_line:
-                next_err_line = next_err_line.strip()
-                print next_err_line
-        except IOError:
+            line = qstdout.get_nowait()
+        except Empty:
             pass
+        else: # got line
 
+            matches = commit_regex.match(line.strip())
+            if matches:
+                print "\b"*string_len,
+                print matches.group(1),
+                string_len=len(matches.group(1))+2
+
+            matches = files_removed_regex.match(line.strip())
+            if matches:
+                if matches.group(1) not in files_removed:
+                    files_removed.append(matches.group(1))
+
+        # stderr
         try:
-            next_line = proc.stdout.readline()
-            if not next_line:
-                continue
-        except IOError:
+            line = qstderr.get_nowait()
+        except Empty:
+            pass
+        else: # got line
             continue
-#        matches = regex.match(next_line)
-#        if matches and not indexend:
-#            print "\b"*string_len,
-#            print matches.group(1),
-#            string_len=len(matches.group(1))+2
-#            if matches.group(2) == matches.group(3):
-#                indexend=True
-#
-#        if indexend:
-#            print next_line
-        next_line = next_line.strip()
-        print next_line
+            print line
 
-#    while True:
-#        next_err_line = stderr.readline()
-#        if not next_line:
-#            break
-#        print next_line
+    # finished
+    print
 
-    return
+    # summary of output processed
+    print "List of files removed from history:"
+    files_removed.sort()
+    for file in files_removed:
+        print "\t%s" % file
 
 
 if __name__ == '__main__':
@@ -297,4 +314,4 @@ fi
 ''',
                                 "-f",
                                 *branches,
-                                callback=git_progress)
+                                callback=git_output_process)
