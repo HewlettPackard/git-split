@@ -215,7 +215,7 @@ Usage: %%prog [options] [args]
     print
 
     cloned_repo.git.filter_branch("--index-filter",
-                                  '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached''' % ' '.join(['''-e \"%s\"''' % p for p in paths_to_include]),
+                                  '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached''' % ' '.join(['''-e \"^%s\"''' % p for p in paths_to_include]),
                                   "--commit-filter",'''
 if [ initial = "${3-initial}" ]
 then
