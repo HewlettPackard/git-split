@@ -171,8 +171,8 @@ def git_output_process(proc):
         except Empty:
             pass
         else: # got line
+            logging.info(line.strip())
             continue
-            print line
 
     # finished
     print
@@ -189,6 +189,9 @@ if __name__ == '__main__':
 Usage: %%prog [options] [args]
 
 '''.strip('\n'))
+
+    import logging
+    logging.basicConfig(format="%(message)s", filename="split_repo.log", level=logging.INFO)
 
     local_clone = os.path.expanduser("~/git/localrepo")
     new_repo = os.path.expanduser("~/git/newrepo")
