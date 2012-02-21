@@ -310,6 +310,7 @@ else
 
         if [ "${#sametreeparents[@]}" = 1 ]
         then
+            keep_merge=0
             sametreeparent="${sametreeparents[0]}"
             declare -a neededparents=()
             for p in "${notsametreeparents[@]}"
@@ -327,12 +328,13 @@ else
                 elif [ $rc = 1 ]
                 then
                     echo "non-common ancestors, keeping merge" >&2
+                    keep_merge=1
                 else
                     die "git merge-base had a problem"
                 fi
             done
 
-            if [ "${#neededparents[@]}" = 0 ]
+            if [ "${#neededparents[@]}" = 0 -a "${keep_merge}" = 0 ]
             then
                 skip_commit "$my_tree" -p "$sametreeparent"
             else
