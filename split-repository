@@ -191,7 +191,11 @@ Usage: %%prog [options] [args]
 '''.strip('\n'))
 
     import logging
-    logging.basicConfig(format="%(message)s", filename="split_repo.log", level=logging.INFO)
+    logfile = "split_repo.log"
+    if os.path.exists(logfile):
+        os.remove(logfile)
+
+    logging.basicConfig(format="%(message)s", filename=logfile, level=logging.INFO)
 
     local_clone = os.path.expanduser("~/git/localrepo")
     new_repo = os.path.expanduser("~/git/newrepo")
