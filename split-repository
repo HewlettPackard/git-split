@@ -314,33 +314,34 @@ else
             fi
         done
 
-        if [ "${#sametreeparents[@]}" = 1 ]
+        if [ "${#sametreeparents[@]}" -ge 1 ]
         then
-            keep_merge=0
-            sametreeparent="${sametreeparents[0]}"
             declare -a neededparents=()
-            for p in "${notsametreeparents[@]}"
+            for sametreeparent in "${sametreeparents[0]}"
             do
-                set +e
-                mb=$(git merge-base "$sametreeparent" "$p")
-                rc=$?
-                set -e
-                if [ $rc = 0 ]
-                then
-                    if [ ! "$mb" = "$p" ]
+                for p in "${notsametreeparents[@]}"
+                do
+                    set +e
+                    mb=$(git merge-base "$sametreeparent" "$p")
+                    rc=$?
+                    set -e
+                    if [ $rc = 0 ]
                     then
+                        if [ ! "$mb" = "$p" ]
+                        then
+                            neededparents+=("$p")
+                        fi
+                    elif [ $rc = 1 ]
+                    then
+                        echo "non-common ancestors, keeping merge" >&2
                         neededparents+=("$p")
+                    else
+                        die "git merge-base had a problem"
                     fi
-                elif [ $rc = 1 ]
-                then
-                    echo "non-common ancestors, keeping merge" >&2
-                    keep_merge=1
-                else
-                    die "git merge-base had a problem"
-                fi
+                done
             done
 
-            if [ "${#neededparents[@]}" = 0 -a "${keep_merge}" = 0 ]
+            if [ "${#neededparents[@]}" = 0 ]
             then
                 skip_commit "$my_tree" -p "$sametreeparent"
             else
