@@ -259,8 +259,14 @@ fi
 %s
 if [ initial = "${3-initial}" ]
 then
-    echo "initial commit" >&2
-    git_commit_non_empty_tree "$@"
+    # empty tree in git always hashes to "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    if [ "$1" = "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]
+    then
+        skip_commit "$@"
+    else
+        echo "initial commit" >&2
+        git_commit_non_empty_tree "$@"
+    fi
 else
     if [ znot_a_merge = z"${5-not_a_merge}" ]
     then
@@ -308,28 +314,31 @@ else
             fi
         done
 
-        if [ "${#sametreeparents[@]}" = 1 ]
+        if [ "${#sametreeparents[@]}" -ge 1 ]
         then
-            sametreeparent="${sametreeparents[0]}"
             declare -a neededparents=()
-            for p in "${notsametreeparents[@]}"
+            for sametreeparent in "${sametreeparents[0]}"
             do
-                set +e
-                mb=$(git merge-base "$sametreeparent" "$p")
-                rc=$?
-                set -e
-                if [ $rc = 0 ]
-                then
-                    if [ ! "$mb" = "$p" ]
+                for p in "${notsametreeparents[@]}"
+                do
+                    set +e
+                    mb=$(git merge-base "$sametreeparent" "$p")
+                    rc=$?
+                    set -e
+                    if [ $rc = 0 ]
                     then
+                        if [ ! "$mb" = "$p" ]
+                        then
+                            neededparents+=("$p")
+                        fi
+                    elif [ $rc = 1 ]
+                    then
+                        echo "non-common ancestors, keeping merge" >&2
                         neededparents+=("$p")
+                    else
+                        die "git merge-base had a problem"
                     fi
-                elif [ $rc = 1 ]
-                then
-                    echo "non-common ancestors, keeping merge" >&2
-                else
-                    die "git merge-base had a problem"
-                fi
+                done
             done
 
             if [ "${#neededparents[@]}" = 0 ]
