@@ -221,37 +221,6 @@ Usage: %%prog [options] [args]
     print "\n".join(paths_to_include)
     print
 
-    protect_commits=[]
-    if len(cloned_repo.git.rev_list(max_parents=0, *branches).split()) > 1:
-        print "More than one root commit detected, likely some special merges combining history"
-        print "are present in this repository. Searching for these merge commits to protect"
-
-        commits=cloned_repo.git.rev_list(parents=True, merges=True, *branches)
-        for commit_parents in commits.split('\n'):
-            commit=commit_parents.split(' ')[0]
-            parents=commit_parents.split(' ')[1:]
-            mytree=cloned_repo.git.rev_parse("%s^{tree}" % commit)
-            for parent in parents:
-                if cloned_repo.git.rev_parse("%s^{tree}" % parents[0]) == mytree:
-                    (status, output, error) = cloned_repo.git.merge_base(with_exceptions=False,
-                                                                            with_extended_output=True,
-                                                                            *parents)
-                    if status != 0:
-                        print "commit %s merges unique history, marking that it be preserved" % commit
-                        protect_commits.append(commit)
-                        break
-
-    print "Protecting commits: %s" % ' '.join(protect_commits)
-
-    protect_special_commits = ['''
-if [ x${GIT_COMMIT} = x%s ]
-then
-    echo "Protecting special commit ${GIT_COMMIT}" >&2
-    git commit-tree "$@"
-    exit 0
-fi
-''' % special_commit for special_commit in protect_commits]
-
     debug_lvl=3
     cloned_repo.git.filter_branch("--index-filter",
                                   '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached''' % ' '.join(['''-e \"^%s\"''' % p for p in paths_to_include]),
@@ -275,7 +244,6 @@ function log_debug() {
 log_debug "args = $@"
 log_debug "$(git ls-files)"
 
-%s
 if [ initial = "${3-initial}" ]
 then
     # empty tree in git always hashes to "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -390,7 +358,7 @@ else
         fi
     fi
 fi
-''' % (debug_lvl, ' '.join(protect_special_commits)),
+''' % debug_lvl,
                                 "-f",
                                 *branches,
                                 callback=git_output_process)
