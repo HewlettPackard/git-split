@@ -77,19 +77,57 @@ def git_output_process(proc):
 
 if __name__ == '__main__':
     parser = OptionParser(version='%prog 1.0', usage='''
-Usage: %%prog [options] [args]
+Usage: %prog [options] [args]
+
+Splits an existing repository based on a list of files/patterns
+to be kept, with all history preserved and any empty commits,
+including merge commits, pruned and placed under a new repository.
 
 '''.strip('\n'))
+    parser.add_option('-i', '--include-file', dest='include_file',
+                      help='File containing patterns to include, one per line. ' \
+                           'Basename of file will be used as the target repository ' \
+                           'name and for the log file unless -n, --new-repo is set.')
+    parser.add_option('-I', '--include', dest='file_pattern',
+                      help='Whitespace separated list of files to include. ' \
+                           'Appended to the pattern list specified by --include-file. ' \
+                           'Cannot be used when multiple --include-file set.')
+
+    (options, args) = parser.parse_args(sys.argv[1:])
 
     logfile = "split_repo.log"
     if os.path.exists(logfile):
         os.remove(logfile)
 
     logging.basicConfig(format="%(message)s", filename=logfile, level=logging.INFO)
+    # resolve any options
+    include_patterns = []
+    include_file = options.include_file
+    new_repo = ""
+    logfile = "split.log"
+    if include_file != None:
+        if not os.path.exists(include_file):
+            print "Specified include file does not exist: %s" % include_file
+            sys.exit(1)
+        include_patterns = [line.strip() \
+                            for line in open(include_file, 'r').read().split('\n') \
+                                if line and line[0] != "#" ]
+        new_repo = os.path.splitext(os.path.basename(include_file))[0]
+        logfile = "%s.log" % new_repo
+
+    if options.file_pattern:
+        include_patterns.extend([pattern.strip() \
+                                 for pattern in options.file_pattern.split() \
+                                    if pattern
+                                ])
+
+    if include_patterns == []:
+        print "No include pattern specified! Cannot prune repo!"
+        sys.exit(2)
+
 
     local_clone = os.path.expanduser("~/git/localrepo")
     new_repo = os.path.expanduser("~/git/newrepo")
-    paths_to_include = []
 
     src_repo = git.Repo(local_clone)
     assert src_repo.bare == False
@@ -108,12 +146,12 @@ Usage: %%prog [options] [args]
     os.chdir(new_repo)
     branches = ["master", "develop"]
     print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
-    print "\n".join(paths_to_include)
+    print "\n".join(include_patterns)
     print
 
     debug_lvl=3
     cloned_repo.git.filter_branch("--index-filter",
-                                  FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in paths_to_include]),
+                                  FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in include_patterns]),
                                   "--commit-filter",
                                   FilterBranch.commit_filter % debug_lvl,
                                   "-f",
