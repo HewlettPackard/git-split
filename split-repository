@@ -6,6 +6,7 @@ import git_callback
 import os, sys
 import shutil
 import re
+import logging
 
 from threading  import Thread
 try:
@@ -79,7 +80,6 @@ Usage: %%prog [options] [args]
 
 '''.strip('\n'))
 
-    import logging
     logfile = "split_repo.log"
     if os.path.exists(logfile):
         os.remove(logfile)
