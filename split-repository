@@ -7,7 +7,7 @@ from filterbranch import FilterBranch
 import os, sys
 import shutil
 import re
-import logging
+import logging, logging.handlers
 
 from threading  import Thread
 try:
@@ -34,6 +34,8 @@ def git_output_process(proc):
     commit_regex = re.compile("^Rewrite [a-z0-9]{40} \((([^\/]*)\/([^\)]*))\)")
     files_removed_regex = re.compile(".*rm '([^']*)'$")
     print "Processing commit:",
+
+    logger = logging.getLogger()
 
     string_len = 0
     files_removed = []
@@ -62,7 +64,7 @@ def git_output_process(proc):
         except Empty:
             pass
         else: # got line
-            logging.info(line.strip())
+            logger.info(line.strip())
             continue
 
     # finished
@@ -95,11 +97,6 @@ including merge commits, pruned and placed under a new repository.
 
     (options, args) = parser.parse_args(sys.argv[1:])
 
-    logfile = "split_repo.log"
-    if os.path.exists(logfile):
-        os.remove(logfile)
-
-    logging.basicConfig(format="%(message)s", filename=logfile, level=logging.INFO)
     # resolve any options
     include_patterns = []
     include_file = options.include_file
@@ -125,6 +122,17 @@ including merge commits, pruned and placed under a new repository.
         print "No include pattern specified! Cannot prune repo!"
         sys.exit(2)
 
+
+    # sort out logging
+    print "Using logfile: %s" % logfile
+    logger = logging.getLogger()
+    rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
+    rh.setFormatter(logging.Formatter("%(message)s"))
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(rh)
+
+    if os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
+        rh.doRollover()
 
     local_clone = os.path.expanduser("~/git/localrepo")
     new_repo = os.path.expanduser("~/git/newrepo")
