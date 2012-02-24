@@ -94,13 +94,24 @@ including merge commits, pruned and placed under a new repository.
                       help='Whitespace separated list of files to include. ' \
                            'Appended to the pattern list specified by --include-file. ' \
                            'Cannot be used when multiple --include-file set.')
+    parser.add_option('-r', '--src-repo', dest='src_repo',
+                      help='Source repository to split. If this is local the script ' \
+                           'will use it as a reference and still attempt to retrieve ' \
+                           'from the original remote repo. To prevent querying of the '
+                           'remote, remove the "origin" remote from the git repo.')
+    parser.add_option('-n', '--new-repo', dest='target_repo',
+                      help='Sets the target repository name. Created at the given path ' \
+                           '(if value is a path), at the same level if just a name and ' \
+                           'source repo is local or in the current working directory')
+    parser.add_option('-f', '--force', action='store_true', default=False,
+                      help='Force overwriting of the target path if it exists')
 
     (options, args) = parser.parse_args(sys.argv[1:])
 
     # resolve any options
     include_patterns = []
     include_file = options.include_file
-    new_repo = ""
+    new_repo_name = None
     logfile = "split.log"
     if include_file != None:
         if not os.path.exists(include_file):
@@ -109,8 +120,7 @@ including merge commits, pruned and placed under a new repository.
         include_patterns = [line.strip() \
                             for line in open(include_file, 'r').read().split('\n') \
                                 if line and line[0] != "#" ]
-        new_repo = os.path.splitext(os.path.basename(include_file))[0]
-        logfile = "%s.log" % new_repo
+        new_repo_name = os.path.splitext(os.path.basename(include_file))[0]
 
     if options.file_pattern:
         include_patterns.extend([pattern.strip() \
@@ -122,8 +132,43 @@ including merge commits, pruned and placed under a new repository.
         print "No include pattern specified! Cannot prune repo!"
         sys.exit(2)
 
+    # determine source repository to use, and whether we need to clone a local copy to
+    # allow for rapid re-runs or just copy the existing local repo to the target repo and
+    # prune
+    clone_options = []
+    if not options.src_repo:
+        print "No source repository specified to use!"
+        sys.exit(2)
+    else:
+        if options.src_repo[:7] == "file://":
+            src_repo = options.src_repo[7:]
+        else:
+            src_repo = options.src_repo
+
+        if os.path.exists(src_repo):
+            print "Using local path clone"
+            clone_options.append("--no-hardlinks")
+        else:
+            print "Need to create a local clone of the remote repository"
+            print "Currently not supported by this script"
+            sys.exit(1)
+
+    if options.target_repo:
+        new_repo_name = options.target_repo
+
+    if not new_repo_name:
+        print "No target repository set"
+        sys.exit(2)
+
+    # determine full target path for the target repository
+    if os.path.sep in new_repo_name:
+        # path
+        new_repo = new_repo_name
+    else:
+        new_repo = os.path.join(os.path.dirname(src_repo.rstrip(os.path.sep)), new_repo_name)
 
     # sort out logging
+    logfile = "%s.log" % os.path.basename(new_repo.rstrip(os.path.sep))
     print "Using logfile: %s" % logfile
     logger = logging.getLogger()
     rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
@@ -134,31 +179,32 @@ including merge commits, pruned and placed under a new repository.
     if os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
         rh.doRollover()
 
-    local_clone = os.path.expanduser("~/git/localrepo")
-    new_repo = os.path.expanduser("~/git/newrepo")
+    local_clone = git.Repo(src_repo)
+    assert local_clone.bare == False
 
-    src_repo = git.Repo(local_clone)
-    assert src_repo.bare == False
-
-    if os.path.isdir(new_repo):
-        print "Existing copy found, removing to start from fresh"
-        shutil.rmtree(new_repo)
+    if os.path.exists(new_repo):
+        if options.force:
+            print "Existing copy found, removing to start from fresh"
+            shutil.rmtree(new_repo)
+        else:
+            print "Target repository path (%s) already exists, cannot create" % new_repo
+            sys.exit(2)
 
     print "Cloning local repo to new path"
-    shutil.copytree(local_clone + "/.git", new_repo + "/.git", symlinks=True)
-
-    cloned_repo = git.Repo(new_repo)
-    cloned_repo.git.reset(hard=True)
+    local_clone.git.clone("--reference", src_repo, local_clone.git.config("--get", "remote.origin.url"),
+                         os.path.abspath(new_repo))
 
     # make sure the git commands are run on the correct repo
-    os.chdir(new_repo)
-    branches = ["master", "develop"]
+    os.chdir(os.path.abspath(new_repo))
+    new_clone = git.Repo(new_repo)
+    branches = ["master"]
+
     print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
     print "\n".join(include_patterns)
     print
 
     debug_lvl=3
-    cloned_repo.git.filter_branch("--index-filter",
+    new_clone.git.filter_branch("--index-filter",
                                   FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in include_patterns]),
                                   "--commit-filter",
                                   FilterBranch.commit_filter % debug_lvl,
