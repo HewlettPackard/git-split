@@ -213,12 +213,12 @@ including merge commits, pruned and placed under a new repository.
     remote_branches = new_clone.git.for_each_ref("--format","%(refname:short)","refs/remotes/origin/")
     ignore_remote_branches = ["HEAD"]
     ignore_remote_branches.append(new_clone.git.rev_parse("--abbrev-ref","HEAD").strip())
-    for branch in remote_branches.split():
-        if branch == None:
+    for origin_branch in remote_branches.split():
+        if origin_branch == None:
             continue
-        branch = branch[7:]
+        branch = origin_branch[7:]
         if branch not in ignore_remote_branches:
-            new_clone.git.branch(branch)
+            new_clone.git.branch(branch, origin_branch)
     new_clone.git.remote("rm", "origin")
 
     branches = ["--", "--all"]
@@ -248,11 +248,16 @@ including merge commits, pruned and placed under a new repository.
     new_clone.git.gc(aggressive=True, prune="now")
 
     # prune branches that point to the same ref
-    print "Pruning duplicate branches"
+    if keep_branches != []:
+        print "Pruning duplicate branches"
     for branch in keep_branches:
+        new_clone.git.checkout(branch)
         prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
         for prune_branch in prune_list:
             prune_branch = prune_branch.strip(' *')
             if prune_branch not in keep_branches:
                 logger.info("Pruning %s" % prune_branch)
                 new_clone.git.branch("-d", prune_branch)
+
+    # switch back to default branch
+    new_clone.git.checkout("master")
