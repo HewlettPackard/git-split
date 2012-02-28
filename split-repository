@@ -15,7 +15,7 @@ try:
 except ImportError:
     from queue import Queue, Empty
 
-def git_output_process(proc):
+def git_output_process(keep_files, proc):
     def enqueue_output(out, queue):
         for line in iter(out.readline, b''):
             queue.put(line)
@@ -47,6 +47,7 @@ def git_output_process(proc):
             pass
         else: # got line
 
+            logger.debug(line.strip())
             matches = commit_regex.match(line.strip())
             if matches:
                 print "\b"*string_len,
@@ -70,10 +71,37 @@ def git_output_process(proc):
     # finished
     print
 
+    # make the list of files removed from history as small as possible
+    keep_files.sort()
+    keep_files_dict = {}
+    for file in keep_files:
+        dict = keep_files_dict
+        for path_item in file.split(os.path.sep):
+            if not path_item in dict:
+                dict[path_item] = {}
+            dict = dict[path_item]
+
+    files_removed.sort()
+
+    files_removed_short = []
+    for file in files_removed:
+        dict = keep_files_dict
+        file_paths = file.split(os.path.sep)
+        for i, path_item in enumerate(file_paths, 1):
+            logger.debug("searching %s for %s" % (dict, path_item))
+            if not path_item in dict:
+                short_path = os.path.join(*file_paths[:i])
+                if short_path not in files_removed_short:
+                    files_removed_short.append(short_path)
+                else:
+                    logger.debug("didn't find %s" % short_path)
+                break
+
+            dict = dict[path_item]
+
     # summary of output processed
     print "List of files removed from history:"
-    files_removed.sort()
-    for file in files_removed:
+    for file in files_removed_short:
         print "\t%s" % file
 
 
@@ -240,7 +268,7 @@ including merge commits, pruned and placed under a new repository.
                                   FilterBranch.commit_filter % debug_lvl,
                                   "-f",
                                   *branches,
-                                  callback=git_output_process)
+                                  callback=lambda proc: git_output_process(include_patterns, proc))
 
     # clean up
     print "Removing refs/original/*"
