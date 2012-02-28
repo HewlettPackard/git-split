@@ -108,6 +108,12 @@ including merge commits, pruned and placed under a new repository.
     parser.add_option('-b', '--branch', dest='branches', action='append',
                       help='Name of branch to process. May be specified multiple times. ' \
                            'Default is to process all branches.')
+    parser.add_option('-p', '--prune', action='store_true', default=False,
+                      help='Prune new repository of any branches that reference a commit ' \
+                           'that is reachable from any branch specified by "--keep-branch"')
+    parser.add_option('-k', '--keep-branch', action="append", dest="keep_branches",
+                      help='Name of branches to prevent from being pruned. Specify one for '
+                           'each branch to be kept.')
 
     (options, args) = parser.parse_args(sys.argv[1:])
 
@@ -170,6 +176,14 @@ including merge commits, pruned and placed under a new repository.
     else:
         new_repo = os.path.join(os.path.dirname(src_repo.rstrip(os.path.sep)), new_repo_name)
 
+    # branch pruning options
+    keep_branches = []
+    if options.prune:
+        if options.keep_branches:
+            keep_branches = options.keep_branches
+        else:
+            keep_branches = ["master"]
+
     # sort out logging
     logfile = "%s.log" % os.path.basename(new_repo.rstrip(os.path.sep))
     print "Using logfile: %s" % logfile
@@ -229,3 +243,22 @@ including merge commits, pruned and placed under a new repository.
                                   "-f",
                                   *branches,
                                   callback=git_output_process)
+
+    # clean up
+    print "Removing refs/original/*"
+    for ref in new_clone.git.for_each_ref("--format=%(refname)", "refs/original/").split():
+        logger.info("Deleteing %s" % ref)
+        new_clone.git.update_ref("-d", ref)
+
+    new_clone.git.reflog("expire", "--expire=now", "--all")
+    new_clone.git.gc(aggressive=True, prune="now")
+
+    # prune branches that point to the same ref
+    print "Pruning duplicate branches"
+    for branch in keep_branches:
+        prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
+        for prune_branch in prune_list:
+            prune_branch = prune_branch.strip(' *')
+            if prune_branch not in keep_branches:
+                logger.info("Pruning %s" % prune_branch)
+                new_clone.git.branch("-d", prune_branch)
