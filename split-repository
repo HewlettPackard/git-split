@@ -78,13 +78,11 @@ def git_output_process(proc):
 
 
 if __name__ == '__main__':
-    parser = OptionParser(version='%prog 1.0', usage='''
-Usage: %prog [options] [args]
-
+    parser = OptionParser(version='%prog 1.0', usage='''Usage: %prog [options]''',
+                          description='''
 Splits an existing repository based on a list of files/patterns
 to be kept, with all history preserved and any empty commits,
 including merge commits, pruned and placed under a new repository.
-
 '''.strip('\n'))
     parser.add_option('-i', '--include-file', dest='include_file',
                       help='File containing patterns to include, one per line. ' \
@@ -138,16 +136,14 @@ including merge commits, pruned and placed under a new repository.
                                 ])
 
     if include_patterns == []:
-        print "No include pattern specified! Cannot prune repo!"
-        sys.exit(2)
+        parser.error("No include pattern specified! Cannot prune repo! Set -i or -I.")
 
     # determine source repository to use, and whether we need to clone a local copy to
     # allow for rapid re-runs or just copy the existing local repo to the target repo and
     # prune
     clone_options = []
     if not options.src_repo:
-        print "No source repository specified to use!"
-        sys.exit(2)
+        parser.error("No source repository specified to use! Set -s, --src-repo")
     else:
         if options.src_repo[:7] == "file://":
             src_repo = options.src_repo[7:]
@@ -166,8 +162,7 @@ including merge commits, pruned and placed under a new repository.
         new_repo_name = options.target_repo
 
     if not new_repo_name:
-        print "No target repository set"
-        sys.exit(2)
+        parser.error("No target repository set. Set -i or -n")
 
     # determine full target path for the target repository
     if os.path.sep in new_repo_name:
@@ -204,8 +199,7 @@ including merge commits, pruned and placed under a new repository.
             print "Existing copy found, removing to start from fresh"
             shutil.rmtree(new_repo)
         else:
-            print "Target repository path (%s) already exists, cannot create" % new_repo
-            sys.exit(2)
+            parser.error("Target repository path (%s) already exists, cannot create" % new_repo)
 
     print "Cloning local repo to new path"
     local_clone.git.clone("--reference", src_repo, local_clone.git.config("--get", "remote.origin.url"),
