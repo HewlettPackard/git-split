@@ -202,8 +202,12 @@ including merge commits, pruned and placed under a new repository.
             parser.error("Target repository path (%s) already exists, cannot create" % new_repo)
 
     print "Cloning local repo to new path"
-    local_clone.git.clone("--reference", src_repo, local_clone.git.config("--get", "remote.origin.url"),
-                         os.path.abspath(new_repo))
+    remote_ref = local_clone.git.config("--get", "remote.origin.url", with_exceptions=False)
+    if remote_ref:
+        local_clone.git.clone("--reference", src_repo, remote_ref,
+                              os.path.abspath(new_repo))
+    else:
+        local_clone.git.clone(src_repo, os.path.abspath(new_repo))
 
     # make sure the git commands are run on the correct repo
     os.chdir(os.path.abspath(new_repo))
