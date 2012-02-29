@@ -15,6 +15,39 @@ try:
 except ImportError:
     from queue import Queue, Empty
 
+def shortest_exclusive_paths(excludes, includes):
+
+    logger = logging.getLogger()
+
+    includes.sort()
+    includes_dict = {}
+    for file in includes:
+        dict = includes_dict
+        for path_item in file.split(os.path.sep):
+            if not path_item in dict:
+                dict[path_item] = {}
+            dict = dict[path_item]
+
+    excludes.sort()
+
+    exclusive = []
+    for file in excludes:
+        dict = includes_dict
+        file_paths = os.path.normpath(file).split(os.path.sep)
+        for i, path_item in enumerate(file_paths, 1):
+            logger.debug("searching %s for %s" % (dict, path_item))
+            if not path_item in dict:
+                short_path = os.path.join(*file_paths[:i])
+                if short_path not in exclusive:
+                    exclusive.append(short_path)
+                else:
+                    logger.debug("didn't find %s" % short_path)
+                break
+
+            dict = dict[path_item]
+
+    return(exclusive)
+
 def git_output_process(keep_files, proc):
     def enqueue_output(out, queue):
         for line in iter(out.readline, b''):
@@ -71,37 +104,9 @@ def git_output_process(keep_files, proc):
     # finished
     print
 
-    # make the list of files removed from history as small as possible
-    keep_files.sort()
-    keep_files_dict = {}
-    for file in keep_files:
-        dict = keep_files_dict
-        for path_item in file.split(os.path.sep):
-            if not path_item in dict:
-                dict[path_item] = {}
-            dict = dict[path_item]
-
-    files_removed.sort()
-
-    files_removed_short = []
-    for file in files_removed:
-        dict = keep_files_dict
-        file_paths = file.split(os.path.sep)
-        for i, path_item in enumerate(file_paths, 1):
-            logger.debug("searching %s for %s" % (dict, path_item))
-            if not path_item in dict:
-                short_path = os.path.join(*file_paths[:i])
-                if short_path not in files_removed_short:
-                    files_removed_short.append(short_path)
-                else:
-                    logger.debug("didn't find %s" % short_path)
-                break
-
-            dict = dict[path_item]
-
     # summary of output processed
     print "List of files removed from history:"
-    for file in files_removed_short:
+    for file in shortest_exclusive_paths(files_removed, keep_files):
         print "\t%s" % file
 
 
