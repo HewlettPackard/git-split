@@ -109,6 +109,121 @@ def git_output_process(keep_files, proc):
     for file in shortest_exclusive_paths(files_removed, keep_files):
         print "\t%s" % file
 
+def split_repo(src_repo, include_file, include_pattern, target_repo, branches, prune, 
+                keep_branches, force=False):
+
+    new_repo_name = target_repo
+    includes = []
+    if include_file != None:
+        if not os.path.exists(include_file):
+            print "Specified include file does not exist: %s" % include_file
+            sys.exit(1)
+        includes = [line.strip() \
+                            for line in open(include_file, 'r').read().split('\n') \
+                                if line and line[0] != "#" ]
+        if not new_repo_name:
+            new_repo_name = os.path.splitext(os.path.basename(include_file))[0]
+
+    if include_pattern:
+        includes.extend([pattern.strip() \
+                                for pattern in include_pattern.split() \
+                                    if pattern
+                                ])
+
+    if includes == []:
+        print "No include pattern specified! Cannot prune repo!"
+        return False
+
+    # determine full target path for the target repository
+    if os.path.sep in new_repo_name:
+        # path
+        new_repo = new_repo_name
+    else:
+        new_repo = os.path.join(os.path.dirname(src_repo.rstrip(os.path.sep)), new_repo_name)
+
+    # sort out logging
+    logfile = "%s.log" % os.path.basename(new_repo.rstrip(os.path.sep))
+    print "Using logfile: %s" % logfile
+    logger = logging.getLogger()
+    rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
+    rh.setFormatter(logging.Formatter("%(message)s"))
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(rh)
+
+    if os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
+        rh.doRollover()
+
+    if os.path.exists(new_repo):
+        if force:
+            print "Existing copy found, removing to start from fresh"
+            shutil.rmtree(new_repo)
+        else:
+            parser.error("Target repository path (%s) already exists, cannot create" % new_repo)
+
+    print "Cloning local repo to new path"
+    remote_ref = local_clone.git.config("--get", "remote.origin.url", with_exceptions=False)
+    if remote_ref:
+        local_clone.git.clone("--reference", src_repo, remote_ref,
+                            os.path.abspath(new_repo))
+    else:
+        local_clone.git.clone(src_repo, os.path.abspath(new_repo))
+
+    # make sure the git commands are run on the correct repo
+    os.chdir(os.path.abspath(new_repo))
+    new_clone = git.Repo(new_repo)
+
+    # make local branches of all remote branches, and prune them all
+    remote_branches = new_clone.git.for_each_ref("--format","%(refname:short)","refs/remotes/origin/")
+    ignore_remote_branches = ["HEAD"]
+    ignore_remote_branches.append(new_clone.git.rev_parse("--abbrev-ref","HEAD").strip())
+    for origin_branch in remote_branches.split():
+        if origin_branch == None:
+            continue
+        branch = origin_branch[7:]
+        if branch not in ignore_remote_branches:
+            new_clone.git.branch(branch, origin_branch)
+    new_clone.git.remote("rm", "origin")
+
+    if branches == None or branches == []:
+        branches = ["--", "--all"]
+
+    print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
+    print "\n".join(includes)
+    print
+
+    debug_lvl=3
+    new_clone.git.filter_branch("--index-filter",
+                                FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
+                                "--commit-filter",
+                                FilterBranch.commit_filter % debug_lvl,
+                                "-f",
+                                *branches,
+                                callback=lambda proc: git_output_process(includes, proc))
+
+    # clean up
+    print "Removing refs/original/*"
+    for ref in new_clone.git.for_each_ref("--format=%(refname)", "refs/original/").split():
+        logger.info("Deleteing %s" % ref)
+        new_clone.git.update_ref("-d", ref)
+
+    new_clone.git.reflog("expire", "--expire=now", "--all")
+    new_clone.git.gc(aggressive=True, prune="now")
+
+    # prune branches that point to the same ref
+    if keep_branches != []:
+        print "Pruning duplicate branches"
+    for branch in keep_branches:
+        new_clone.git.checkout(branch)
+        prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
+        for prune_branch in prune_list:
+            prune_branch = prune_branch.strip(' *')
+            if prune_branch not in keep_branches:
+                logger.info("Pruning %s" % prune_branch)
+                new_clone.git.branch("-d", prune_branch)
+
+    # switch back to default branch
+    new_clone.git.checkout("master")
+
 
 if __name__ == '__main__':
     parser = OptionParser(version='%prog 1.0', usage='''Usage: %prog [options]''',
@@ -149,26 +264,8 @@ including merge commits, pruned and placed under a new repository.
     (options, args) = parser.parse_args(sys.argv[1:])
 
     # resolve any options
-    include_patterns = []
     include_file = options.include_file
-    new_repo_name = None
-    logfile = "split.log"
-    if include_file != None:
-        if not os.path.exists(include_file):
-            print "Specified include file does not exist: %s" % include_file
-            sys.exit(1)
-        include_patterns = [line.strip() \
-                            for line in open(include_file, 'r').read().split('\n') \
-                                if line and line[0] != "#" ]
-        new_repo_name = os.path.splitext(os.path.basename(include_file))[0]
-
-    if options.file_pattern:
-        include_patterns.extend([pattern.strip() \
-                                 for pattern in options.file_pattern.split() \
-                                    if pattern
-                                ])
-
-    if include_patterns == []:
+    if not (options.include_file or options.file_pattern):
         parser.error("No include pattern specified! Cannot prune repo! Set -i or -I.")
 
     # determine source repository to use, and whether we need to clone a local copy to
@@ -191,18 +288,8 @@ including merge commits, pruned and placed under a new repository.
             print "Currently not supported by this script"
             sys.exit(1)
 
-    if options.target_repo:
-        new_repo_name = options.target_repo
-
-    if not new_repo_name:
+    if not (options.target_repo or options.include_file):
         parser.error("No target repository set. Set -i or -n")
-
-    # determine full target path for the target repository
-    if os.path.sep in new_repo_name:
-        # path
-        new_repo = new_repo_name
-    else:
-        new_repo = os.path.join(os.path.dirname(src_repo.rstrip(os.path.sep)), new_repo_name)
 
     # branch pruning options
     keep_branches = []
@@ -212,89 +299,9 @@ including merge commits, pruned and placed under a new repository.
         else:
             keep_branches = ["master"]
 
-    # sort out logging
-    logfile = "%s.log" % os.path.basename(new_repo.rstrip(os.path.sep))
-    print "Using logfile: %s" % logfile
-    logger = logging.getLogger()
-    rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
-    rh.setFormatter(logging.Formatter("%(message)s"))
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(rh)
-
-    if os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
-        rh.doRollover()
-
     local_clone = git.Repo(src_repo)
     assert local_clone.bare == False
 
-    if os.path.exists(new_repo):
-        if options.force:
-            print "Existing copy found, removing to start from fresh"
-            shutil.rmtree(new_repo)
-        else:
-            parser.error("Target repository path (%s) already exists, cannot create" % new_repo)
 
-    print "Cloning local repo to new path"
-    remote_ref = local_clone.git.config("--get", "remote.origin.url", with_exceptions=False)
-    if remote_ref:
-        local_clone.git.clone("--reference", src_repo, remote_ref,
-                              os.path.abspath(new_repo))
-    else:
-        local_clone.git.clone(src_repo, os.path.abspath(new_repo))
-
-    # make sure the git commands are run on the correct repo
-    os.chdir(os.path.abspath(new_repo))
-    new_clone = git.Repo(new_repo)
-
-    # make local branches of all remote branches, and prune them all
-    remote_branches = new_clone.git.for_each_ref("--format","%(refname:short)","refs/remotes/origin/")
-    ignore_remote_branches = ["HEAD"]
-    ignore_remote_branches.append(new_clone.git.rev_parse("--abbrev-ref","HEAD").strip())
-    for origin_branch in remote_branches.split():
-        if origin_branch == None:
-            continue
-        branch = origin_branch[7:]
-        if branch not in ignore_remote_branches:
-            new_clone.git.branch(branch, origin_branch)
-    new_clone.git.remote("rm", "origin")
-
-    branches = ["--", "--all"]
-    if options.branches:
-        branches = options.branches
-
-    print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
-    print "\n".join(include_patterns)
-    print
-
-    debug_lvl=3
-    new_clone.git.filter_branch("--index-filter",
-                                  FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in include_patterns]),
-                                  "--commit-filter",
-                                  FilterBranch.commit_filter % debug_lvl,
-                                  "-f",
-                                  *branches,
-                                  callback=lambda proc: git_output_process(include_patterns, proc))
-
-    # clean up
-    print "Removing refs/original/*"
-    for ref in new_clone.git.for_each_ref("--format=%(refname)", "refs/original/").split():
-        logger.info("Deleteing %s" % ref)
-        new_clone.git.update_ref("-d", ref)
-
-    new_clone.git.reflog("expire", "--expire=now", "--all")
-    new_clone.git.gc(aggressive=True, prune="now")
-
-    # prune branches that point to the same ref
-    if keep_branches != []:
-        print "Pruning duplicate branches"
-    for branch in keep_branches:
-        new_clone.git.checkout(branch)
-        prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
-        for prune_branch in prune_list:
-            prune_branch = prune_branch.strip(' *')
-            if prune_branch not in keep_branches:
-                logger.info("Pruning %s" % prune_branch)
-                new_clone.git.branch("-d", prune_branch)
-
-    # switch back to default branch
-    new_clone.git.checkout("master")
+    split_repo(src_repo, options.include_file, options.file_pattern, options.target_repo, options.branches,
+               options.prune, options.keep_branches, options.force)
