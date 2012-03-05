@@ -9,6 +9,7 @@ import logging
 
 class FilterBranch:
 
+    tag_filter = '''cat'''
     index_filter = '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached'''
     commit_filter = '''
 DEBUG_LVL=%d

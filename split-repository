@@ -15,6 +15,40 @@ try:
 except ImportError:
     from queue import Queue, Empty
 
+class Worker(Thread):
+    """Thread executing tasks from a given tasks queue"""
+    def __init__(self, tasks):
+        Thread.__init__(self)
+        self.tasks = tasks
+        self.daemon = True
+        self.start()
+
+    def run(self):
+        while True:
+            func, args, kargs = self.tasks.get()
+            try:
+                func(*args, **kargs)
+            except Exception, e:
+                print e
+            finally:
+                self.tasks.task_done()
+
+class ThreadPool:
+    """Pool of threads consuming tasks from a queue"""
+    def __init__(self, num_threads):
+        self.tasks = Queue(num_threads)
+        for _ in range(num_threads): Worker(self.tasks)
+
+    def add_task(self, func, *args, **kargs):
+        """Add a task to the queue"""
+        self.tasks.put((func, args, kargs))
+
+    def wait_completion(self):
+        """Wait for completion of all the tasks in the queue"""
+        self.tasks.join()
+
+
+
 def shortest_exclusive_paths(excludes, includes):
 
     logger = logging.getLogger()
@@ -45,7 +79,7 @@ def shortest_exclusive_paths(excludes, includes):
 
     return(exclusive)
 
-def git_output_process(keep_files, removed_files_list, proc, logger = None):
+def git_output_process(removed_files_list, proc, logger = None, ignore_removed = False):
     def enqueue_output(out, queue):
         for line in iter(out.readline, b''):
             queue.put(line)
@@ -86,10 +120,11 @@ def git_output_process(keep_files, removed_files_list, proc, logger = None):
                 print matches.group(1),
                 string_len=len(matches.group(1))+2
 
-            matches = files_removed_regex.match(stdout_line)
-            if matches:
-                if matches.group(1) not in files_removed:
-                    files_removed.append(matches.group(1))
+            if not ignore_removed:
+                matches = files_removed_regex.match(stdout_line)
+                if matches:
+                    if matches.group(1) not in files_removed:
+                        files_removed.append(matches.group(1))
 
         # stderr
         try:
@@ -103,13 +138,14 @@ def git_output_process(keep_files, removed_files_list, proc, logger = None):
     # finished
     print
 
-    # store list of files removed for main loop to examine
-    removed_files_list.append(files_removed)
+    if not ignore_removed:
+        # store list of files removed for main loop to examine
+        removed_files_list.append(files_removed)
 
     return(proc.returncode, stdout_line, stderr_line)
 
 def split_repo(src_repo, include_file, include_pattern, authors_file, target_repo, branches, prune,
-                keep_branches, force, removed_files):
+                keep_branches, force, removed_files, ignore_removed):
 
     new_repo_name = target_repo
     includes = []
@@ -196,9 +232,11 @@ def split_repo(src_repo, include_file, include_pattern, authors_file, target_rep
                                         FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
                                         "--commit-filter",
                                         FilterBranch.commit_filter % (debug_lvl, authors_file),
+                                        "--tag-name-filter",
+                                        FilterBranch.tag_filter,
                                         "-f",
                                         *branches,
-                                        callback=lambda proc: git_output_process(includes, removed_files, proc, logger))
+                                        callback=lambda proc: git_output_process(removed_files, proc, logger, ignore_removed))
 
     if status != 0:
         logger.error("filter-branch failed")
@@ -269,6 +307,9 @@ including merge commits, pruned and placed under a new repository.
     parser.add_option('-k', '--keep-branch', action="append", dest="keep_branches",
                       help='Name of branches to prevent from being pruned. Specify one for '
                            'each branch to be kept.')
+    parser.add_option('-x', '--ignore-removed', action='store_true', dest="ignore_removed", default=False,
+                      help='Don\'t keep track of the files removed a print out whether the '
+                           'resulting repositories have missed any files')
     parser.add_option('-a', '--authors',
                       help='Authors file to correct mistakes in authors names and emails '
                            'as part of the process of splitting the repository. File is '
@@ -325,34 +366,40 @@ including merge commits, pruned and placed under a new repository.
 
 
     removed_files = []
+    pool = ThreadPool(min(len(options.include_files), 6))
     for include_file in options.include_files:
         if not os.path.exists(include_file):
             parser.error("Specified include file does not exist: '%s'. Use a valid file with -i" % include_file)
             sys.exit(1)
 
-        split_repo(src_repo, include_file, options.file_pattern, authors, options.target_repo, options.branches,
-                   options.prune, keep_branches, options.force, removed_files)
+        pool.add_task(split_repo, src_repo, include_file, options.file_pattern, authors, options.target_repo,
+                      options.branches, options.prune, keep_branches, options.force, removed_files, options.ignore_removed)
+
+    # finished
+    pool.wait_completion()
 
 
-    # look to see if we included all files and directories in one of the splits
-    list_sets = [set(list) for list in removed_files]
-    removed_files = set.intersection(*list_sets)
+    if not options.ignore_removed:
+        # look to see if we included all files and directories in one of the splits
+        list_sets = [set(list) for list in removed_files]
+        removed_files = set.intersection(*list_sets)
 
-    includes = []
-    for include_file in options.include_files:
-        includes.extend([line.strip() \
-                            for line in open(include_file, 'r').read().split('\n') \
-                                if line and line[0] != "#" ])
-    if options.file_pattern != None:
-        includes.extend([pattern.strip() \
-                            for pattern in options.file_pattern.split() if pattern
+        includes = []
+        for include_file in options.include_files:
+            includes.extend([line.strip() \
+                                for line in open(include_file, 'r').read().split('\n') \
+                                    if line and line[0] != "#" ])
+        if options.file_pattern != None:
+            includes.extend([pattern.strip() \
+                                for pattern in options.file_pattern.split() if pattern
+                            ])
 
-    # get the unique includes
-    includes = set(includes)
+        # get the unique includes
+        includes = set(includes)
 
-    ignored_files = shortest_exclusive_paths(removed_files, includes)
-    ignored_files.sort()
-    if ignored_files != []:
-        print "WARNING: after the split some files in the history were not included in any of the new split repos!"
-        for file in ignored_files:
-            print "\t%s" % file
+        ignored_files = shortest_exclusive_paths(removed_files, includes)
+        ignored_files.sort()
+        if ignored_files != []:
+            print "WARNING: after the split some files in the history were not included in any of the new split repos!"
+            for file in ignored_files:
+                print "\t%s" % file
