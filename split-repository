@@ -75,31 +75,32 @@ def git_output_process(keep_files, proc):
     while proc.poll() == None:
         # stdout
         try:
-            line = qstdout.get_nowait()
+            stdout_line = qstdout.get_nowait()
         except Empty:
             pass
         else: # got line
 
-            logger.debug(line.strip())
-            matches = commit_regex.match(line.strip())
+            stdout_line = stdout_line.strip()
+            logger.debug(stdout_line)
+            matches = commit_regex.match(stdout_line)
             if matches:
                 print "\b"*string_len,
                 print matches.group(1),
                 string_len=len(matches.group(1))+2
 
-            matches = files_removed_regex.match(line.strip())
+            matches = files_removed_regex.match(stdout_line)
             if matches:
                 if matches.group(1) not in files_removed:
                     files_removed.append(matches.group(1))
 
         # stderr
         try:
-            line = qstderr.get_nowait()
+            stderr_line = qstderr.get_nowait()
         except Empty:
             pass
         else: # got line
-            logger.info(line.strip())
-            continue
+            stderr_line = stderr_line.strip()
+            logger.info(stderr_line)
 
     # finished
     print
@@ -108,6 +109,8 @@ def git_output_process(keep_files, proc):
     print "List of files removed from history:"
     for file in shortest_exclusive_paths(files_removed, keep_files):
         print "\t%s" % file
+
+    return(proc.returncode, stdout_line, stderr_line)
 
 def split_repo(src_repo, include_file, include_pattern, target_repo, branches, prune, 
                 keep_branches, force=False):
@@ -169,7 +172,6 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
         local_clone.git.clone(src_repo, os.path.abspath(new_repo))
 
     # make sure the git commands are run on the correct repo
-    os.chdir(os.path.abspath(new_repo))
     new_clone = git.Repo(new_repo)
 
     # make local branches of all remote branches, and prune them all
@@ -192,13 +194,20 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
     print
 
     debug_lvl=3
-    new_clone.git.filter_branch("--index-filter",
-                                FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
-                                "--commit-filter",
-                                FilterBranch.commit_filter % debug_lvl,
-                                "-f",
-                                *branches,
-                                callback=lambda proc: git_output_process(includes, proc))
+    (status, last_output, last_error) = \
+            new_clone.git.filter_branch("--index-filter",
+                                        FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
+                                        "--commit-filter",
+                                        FilterBranch.commit_filter % debug_lvl,
+                                        "-f",
+                                        *branches,
+                                        callback=lambda proc: git_output_process(includes, proc))
+
+    if status != 0:
+        logger.error("filter-branch failed")
+        logger.info("last output: %s\nlast error: %s" % (last_output, last_error))
+        print "Critical Failure"
+        sys.exit(1)
 
     # clean up
     print "Removing refs/original/*"
@@ -212,17 +221,19 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
     # prune branches that point to the same ref
     if keep_branches != []:
         print "Pruning duplicate branches"
-    for branch in keep_branches:
-        new_clone.git.checkout(branch)
-        prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
-        for prune_branch in prune_list:
-            prune_branch = prune_branch.strip(' *')
-            if prune_branch not in keep_branches:
-                logger.info("Pruning %s" % prune_branch)
-                new_clone.git.branch("-d", prune_branch)
+        logger.info("Keeping branches %s" % keep_branches)
+        for branch in keep_branches:
+            new_clone.git.checkout(branch)
+            prune_list = new_clone.git.branch("--no-color", "--merged", branch).split('\n')
+            logger.info("Pruning branches %s" % prune_list)
+            for prune_branch in prune_list:
+                prune_branch = prune_branch.strip(' *')
+                if prune_branch not in keep_branches:
+                    logger.info("Pruning %s" % prune_branch)
+                    new_clone.git.branch("-d", prune_branch)
 
-    # switch back to default branch
-    new_clone.git.checkout("master")
+        # switch back to default branch
+        new_clone.git.checkout("master")
 
 
 if __name__ == '__main__':
@@ -294,7 +305,7 @@ including merge commits, pruned and placed under a new repository.
     # branch pruning options
     keep_branches = []
     if options.prune:
-        if options.keep_branches:
+        if options.keep_branches != []:
             keep_branches = options.keep_branches
         else:
             keep_branches = ["master"]
