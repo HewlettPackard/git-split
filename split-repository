@@ -108,7 +108,7 @@ def git_output_process(keep_files, removed_files_list, proc, logger = None):
 
     return(proc.returncode, stdout_line, stderr_line)
 
-def split_repo(src_repo, include_file, include_pattern, target_repo, branches, prune, 
+def split_repo(src_repo, include_file, include_pattern, authors_file, target_repo, branches, prune,
                 keep_branches, force, removed_files):
 
     new_repo_name = target_repo
@@ -195,7 +195,7 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
             new_clone.git.filter_branch("--index-filter",
                                         FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
                                         "--commit-filter",
-                                        FilterBranch.commit_filter % debug_lvl,
+                                        FilterBranch.commit_filter % (debug_lvl, authors_file),
                                         "-f",
                                         *branches,
                                         callback=lambda proc: git_output_process(includes, removed_files, proc, logger))
@@ -269,6 +269,12 @@ including merge commits, pruned and placed under a new repository.
     parser.add_option('-k', '--keep-branch', action="append", dest="keep_branches",
                       help='Name of branches to prevent from being pruned. Specify one for '
                            'each branch to be kept.')
+    parser.add_option('-a', '--authors',
+                      help='Authors file to correct mistakes in authors names and emails '
+                           'as part of the process of splitting the repository. File is '
+                           'standard text file with each line in the format: '
+                           '"old-name:new-email[:new-name:new-email]". Where '
+                           '[...] denotes optional fields')
 
     (options, args) = parser.parse_args(sys.argv[1:])
 
@@ -310,6 +316,13 @@ including merge commits, pruned and placed under a new repository.
     local_clone = git.Repo(src_repo)
     assert local_clone.bare == False
 
+    authors=None
+    if options.authors:
+        if os.path.exists(options.authors):
+            authors = os.path.abspath(options.authors)
+        else:
+            parse.error("Non-existant authors file given '%s', please specify a valid file for option '-a'")
+
 
     removed_files = []
     for include_file in options.include_files:
@@ -317,7 +330,7 @@ including merge commits, pruned and placed under a new repository.
             parser.error("Specified include file does not exist: '%s'. Use a valid file with -i" % include_file)
             sys.exit(1)
 
-        split_repo(src_repo, include_file, options.file_pattern, options.target_repo, options.branches,
+        split_repo(src_repo, include_file, options.file_pattern, authors, options.target_repo, options.branches,
                    options.prune, keep_branches, options.force, removed_files)
 
 

@@ -14,6 +14,8 @@ class FilterBranch:
 DEBUG_LVL=%d
 DEBUG_LVL=${DEBUG_LVL:-0}
 
+AUTHORS_FILE=%s
+
 function log_warn() {
     [ "${DEBUG_LVL}" -ge 3 -a "$*" != "" ] && echo "$*" >&2
 }
@@ -28,6 +30,42 @@ function log_debug() {
 
 log_debug "args = $@"
 log_debug "$(git ls-files)"
+
+if [ -n "${AUTHORS_FILE}" ] && [ -e "${AUTHORS_FILE}" ]
+then
+
+    for i in AUTHOR COMMITTER
+    do
+        _NAME="$(awk -F ":" '
+{
+    if ( match($1,ENVIRON["GIT_'${i}'_NAME"]) ) {
+        if ( !match("", $3) ) {
+            print $3
+        } else {
+            print $1
+        }
+    }
+}
+' < ${AUTHORS_FILE} )"
+
+        _EMAIL="$(awk -F ":" '
+{
+    if ( match($1,ENVIRON["GIT_'${i}'_NAME"]) ) {
+        if ( !match("", $3) ) {
+            print $4
+        } else {
+            print $2
+        }
+    }
+}
+' < ${AUTHORS_FILE} )"
+        if [ -n "${_NAME}" ]
+        then
+            eval 'export GIT_${i}_NAME="${_NAME}"'
+            eval 'export GIT_${i}_EMAIL="${_EMAIL}"'
+        fi
+    done
+fi
 
 if [ initial = "${3-initial}" ]
 then
