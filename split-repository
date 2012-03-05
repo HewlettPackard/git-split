@@ -19,7 +19,6 @@ def shortest_exclusive_paths(excludes, includes):
 
     logger = logging.getLogger()
 
-    includes.sort()
     includes_dict = {}
     for file in includes:
         dict = includes_dict
@@ -27,8 +26,6 @@ def shortest_exclusive_paths(excludes, includes):
             if not path_item in dict:
                 dict[path_item] = {}
             dict = dict[path_item]
-
-    excludes.sort()
 
     exclusive = []
     for file in excludes:
@@ -48,7 +45,7 @@ def shortest_exclusive_paths(excludes, includes):
 
     return(exclusive)
 
-def git_output_process(keep_files, proc):
+def git_output_process(keep_files, removed_files_list, proc, logger = None):
     def enqueue_output(out, queue):
         for line in iter(out.readline, b''):
             queue.put(line)
@@ -68,7 +65,8 @@ def git_output_process(keep_files, proc):
     files_removed_regex = re.compile(".*rm '([^']*)'$")
     print "Processing commit:",
 
-    logger = logging.getLogger()
+    if not logger:
+        logger = logging.getLogger()
 
     string_len = 0
     files_removed = []
@@ -105,15 +103,13 @@ def git_output_process(keep_files, proc):
     # finished
     print
 
-    # summary of output processed
-    print "List of files removed from history:"
-    for file in shortest_exclusive_paths(files_removed, keep_files):
-        print "\t%s" % file
+    # store list of files removed for main loop to examine
+    removed_files_list.append(files_removed)
 
     return(proc.returncode, stdout_line, stderr_line)
 
 def split_repo(src_repo, include_file, include_pattern, target_repo, branches, prune, 
-                keep_branches, force=False):
+                keep_branches, force, removed_files):
 
     new_repo_name = target_repo
     includes = []
@@ -145,12 +141,13 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
         new_repo = os.path.join(os.path.dirname(src_repo.rstrip(os.path.sep)), new_repo_name)
 
     # sort out logging
-    logfile = "%s.log" % os.path.basename(new_repo.rstrip(os.path.sep))
+    logname = os.path.basename(new_repo.rstrip(os.path.sep))
+    logfile = "%s.log" % logname
     print "Using logfile: %s" % logfile
-    logger = logging.getLogger()
+    logger = logging.getLogger(logname)
     rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
     rh.setFormatter(logging.Formatter("%(message)s"))
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logger.addHandler(rh)
 
     if os.path.isfile(logfile) and os.path.getsize(logfile) > 0:
@@ -201,7 +198,7 @@ def split_repo(src_repo, include_file, include_pattern, target_repo, branches, p
                                         FilterBranch.commit_filter % debug_lvl,
                                         "-f",
                                         *branches,
-                                        callback=lambda proc: git_output_process(includes, proc))
+                                        callback=lambda proc: git_output_process(includes, removed_files, proc, logger))
 
     if status != 0:
         logger.error("filter-branch failed")
@@ -243,7 +240,8 @@ Splits an existing repository based on a list of files/patterns
 to be kept, with all history preserved and any empty commits,
 including merge commits, pruned and placed under a new repository.
 '''.strip('\n'))
-    parser.add_option('-i', '--include-file', dest='include_file',
+    parser.add_option('-i', '--include-file', action="append", dest='include_files',
+                      default=[],
                       help='File containing patterns to include, one per line. ' \
                            'Basename of file will be used as the target repository ' \
                            'name and for the log file unless -n, --new-repo is set.')
@@ -275,8 +273,7 @@ including merge commits, pruned and placed under a new repository.
     (options, args) = parser.parse_args(sys.argv[1:])
 
     # resolve any options
-    include_file = options.include_file
-    if not (options.include_file or options.file_pattern):
+    if not (options.include_files != [] or options.file_pattern):
         parser.error("No include pattern specified! Cannot prune repo! Set -i or -I.")
 
     # determine source repository to use, and whether we need to clone a local copy to
@@ -299,7 +296,7 @@ including merge commits, pruned and placed under a new repository.
             print "Currently not supported by this script"
             sys.exit(1)
 
-    if not (options.target_repo or options.include_file):
+    if not (options.target_repo or options.include_files != []):
         parser.error("No target repository set. Set -i or -n")
 
     # branch pruning options
@@ -314,5 +311,33 @@ including merge commits, pruned and placed under a new repository.
     assert local_clone.bare == False
 
 
-    split_repo(src_repo, options.include_file, options.file_pattern, options.target_repo, options.branches,
-               options.prune, options.keep_branches, options.force)
+    removed_files = []
+    for include_file in options.include_files:
+        if not os.path.exists(include_file):
+            parser.error("Specified include file does not exist: '%s'. Use a valid file with -i" % include_file)
+            sys.exit(1)
+
+        split_repo(src_repo, include_file, options.file_pattern, options.target_repo, options.branches,
+                   options.prune, keep_branches, options.force, removed_files)
+
+
+    # look to see if we included all files and directories in one of the splits
+    list_sets = [set(list) for list in removed_files]
+    removed_files = set.intersection(*list_sets)
+
+    includes = []
+    for include_file in options.include_files:
+        includes.extend([line.strip() \
+                            for line in open(include_file, 'r').read().split('\n') \
+                                if line and line[0] != "#" ])
+    includes.extend(options.file_pattern)
+
+    # get the unique includes
+    includes = set(includes)
+
+    ignored_files = shortest_exclusive_paths(removed_files, includes)
+    ignored_files.sort()
+    if ignored_files != []:
+        print "WARNING: after the split some files in the history were not included in any of the new split repos!"
+        for file in ignored_files:
+            print "\t%s" % file
