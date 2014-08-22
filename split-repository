@@ -4,16 +4,19 @@ from optparse import OptionParser
 import git
 import git_callback
 from filterbranch import FilterBranch
-import os, sys
+import os
+import sys
 import shutil
 import re
-import logging, logging.handlers
+import logging
+from logging import handlers
 
-from threading  import Thread
+from threading import Thread
 try:
     from Queue import Queue, Empty
 except ImportError:
     from queue import Queue, Empty
+
 
 class Worker(Thread):
     """Thread executing tasks from a given tasks queue"""
@@ -33,11 +36,13 @@ class Worker(Thread):
             finally:
                 self.tasks.task_done()
 
+
 class ThreadPool:
     """Pool of threads consuming tasks from a queue"""
     def __init__(self, num_threads):
         self.tasks = Queue(num_threads)
-        for _ in range(num_threads): Worker(self.tasks)
+        for _ in range(num_threads):
+            Worker(self.tasks)
 
     def add_task(self, func, *args, **kargs):
         """Add a task to the queue"""
@@ -46,7 +51,6 @@ class ThreadPool:
     def wait_completion(self):
         """Wait for completion of all the tasks in the queue"""
         self.tasks.join()
-
 
 
 def shortest_exclusive_paths(excludes, includes):
@@ -79,7 +83,8 @@ def shortest_exclusive_paths(excludes, includes):
 
     return(exclusive)
 
-def git_output_process(removed_files_list, proc, logger = None, ignore_removed = False):
+
+def git_output_process(removed_files_list, proc, logger=None, ignore_removed=False):
     def enqueue_output(out, queue):
         for line in iter(out.readline, b''):
             queue.put(line)
@@ -87,12 +92,12 @@ def git_output_process(removed_files_list, proc, logger = None, ignore_removed =
 
     qstdout = Queue()
     tstdout = Thread(target=enqueue_output, args=(proc.stdout, qstdout))
-    tstdout.daemon = True # thread dies with the program
+    tstdout.daemon = True  # thread dies with the program
     tstdout.start()
 
     qstderr = Queue()
     tstderr = Thread(target=enqueue_output, args=(proc.stderr, qstderr))
-    tstderr.daemon = True # thread dies with the program
+    tstderr.daemon = True  # thread dies with the program
     tstderr.start()
 
     commit_regex = re.compile("^Rewrite [a-z0-9]{40} \((([^\/]*)\/([^\)]*))\)")
@@ -104,21 +109,21 @@ def git_output_process(removed_files_list, proc, logger = None, ignore_removed =
 
     string_len = 0
     files_removed = []
-    while proc.poll() == None:
+    while proc.poll() is None:
         # stdout
         try:
             stdout_line = qstdout.get_nowait()
         except Empty:
             pass
-        else: # got line
+        else:  # got line
 
             stdout_line = stdout_line.strip()
             logger.debug(stdout_line)
             matches = commit_regex.match(stdout_line)
             if matches:
-                print "\b"*string_len,
+                print "\b" * string_len,
                 print matches.group(1),
-                string_len=len(matches.group(1))+2
+                string_len = len(matches.group(1)) + 2
 
             if not ignore_removed:
                 matches = files_removed_regex.match(stdout_line)
@@ -131,7 +136,7 @@ def git_output_process(removed_files_list, proc, logger = None, ignore_removed =
             stderr_line = qstderr.get_nowait()
         except Empty:
             pass
-        else: # got line
+        else:  # got line
             stderr_line = stderr_line.strip()
             logger.info(stderr_line)
 
@@ -144,26 +149,26 @@ def git_output_process(removed_files_list, proc, logger = None, ignore_removed =
 
     return(proc.returncode, stdout_line, stderr_line)
 
+
 def split_repo(src_repo, include_file, include_pattern, authors_file, target_repo, branches, prune,
-                keep_branches, force, removed_files, ignore_removed):
+               keep_branches, force, removed_files, ignore_removed):
 
     new_repo_name = target_repo
     includes = []
-    if include_file != None:
+    if include_file is not None:
         if not os.path.exists(include_file):
             print "Specified include file does not exist: %s" % include_file
             sys.exit(1)
-        includes = [line.strip() \
-                            for line in open(include_file, 'r').read().split('\n') \
-                                if line and line[0] != "#" ]
+        includes = [line.strip()
+                    for line in open(include_file, 'r').read().split('\n')
+                    if line and line[0] != "#"]
         if not new_repo_name:
             new_repo_name = os.path.splitext(os.path.basename(include_file))[0]
 
     if include_pattern:
-        includes.extend([pattern.strip() \
-                                for pattern in include_pattern.split() \
-                                    if pattern
-                                ])
+        includes.extend([pattern.strip()
+                         for pattern in include_pattern.split()
+                         if pattern])
 
     if includes == []:
         print "No include pattern specified! Cannot prune repo!"
@@ -181,7 +186,7 @@ def split_repo(src_repo, include_file, include_pattern, authors_file, target_rep
     logfile = "%s.log" % logname
     print "Using logfile: %s" % logfile
     logger = logging.getLogger(logname)
-    rh = logging.handlers.RotatingFileHandler(logfile, backupCount=10)
+    rh = handlers.RotatingFileHandler(logfile, backupCount=10)
     rh.setFormatter(logging.Formatter("%(message)s"))
     logger.setLevel(logging.INFO)
     logger.addHandler(rh)
@@ -200,7 +205,7 @@ def split_repo(src_repo, include_file, include_pattern, authors_file, target_rep
     remote_ref = local_clone.git.config("--get", "remote.origin.url", with_exceptions=False)
     if remote_ref:
         local_clone.git.clone("--reference", src_repo, remote_ref,
-                            os.path.abspath(new_repo))
+                              os.path.abspath(new_repo))
     else:
         local_clone.git.clone(src_repo, os.path.abspath(new_repo))
 
@@ -208,35 +213,37 @@ def split_repo(src_repo, include_file, include_pattern, authors_file, target_rep
     new_clone = git.Repo(new_repo)
 
     # make local branches of all remote branches, and prune them all
-    remote_branches = new_clone.git.for_each_ref("--format","%(refname:short)","refs/remotes/origin/")
+    remote_branches = new_clone.git.for_each_ref("--format", "%(refname:short)", "refs/remotes/origin/")
     ignore_remote_branches = ["HEAD"]
-    ignore_remote_branches.append(new_clone.git.rev_parse("--abbrev-ref","HEAD").strip())
+    ignore_remote_branches.append(new_clone.git.rev_parse("--abbrev-ref", "HEAD").strip())
     for origin_branch in remote_branches.split():
-        if origin_branch == None:
+        if origin_branch is None:
             continue
         branch = origin_branch[7:]
+        if keep_branches and branch not in keep_branches:
+            continue
         if branch not in ignore_remote_branches:
             new_clone.git.branch(branch, origin_branch)
     new_clone.git.remote("rm", "origin")
 
-    if branches == None or branches == []:
+    if branches is None or branches == []:
         branches = ["--", "--all"]
 
     print "Pruning branches \"%s\" of everything except the following paths:" % ", ".join(branches)
     print "\n".join(includes)
     print
 
-    debug_lvl=3
+    debug_lvl = 3
     (status, last_output, last_error) = \
-            new_clone.git.filter_branch("--index-filter",
-                                        FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
-                                        "--commit-filter",
-                                        FilterBranch.commit_filter % (debug_lvl, authors_file),
-                                        "--tag-name-filter",
-                                        FilterBranch.tag_filter,
-                                        "-f",
-                                        *branches,
-                                        callback=lambda proc: git_output_process(removed_files, proc, logger, ignore_removed))
+        new_clone.git.filter_branch("--index-filter",
+                                    FilterBranch.index_filter % ' '.join(['''-e \"^%s\"''' % p for p in includes]),
+                                    "--commit-filter",
+                                    FilterBranch.commit_filter % (debug_lvl, authors_file),
+                                    "--tag-name-filter",
+                                    FilterBranch.tag_filter,
+                                    "-f",
+                                    *branches,
+                                    callback=lambda proc: git_output_process(removed_files, proc, logger, ignore_removed))
 
     if status != 0:
         logger.error("filter-branch failed")
@@ -280,29 +287,29 @@ including merge commits, pruned and placed under a new repository.
 '''.strip('\n'))
     parser.add_option('-i', '--include-file', action="append", dest='include_files',
                       default=[],
-                      help='File containing patterns to include, one per line. ' \
-                           'Basename of file will be used as the target repository ' \
+                      help='File containing patterns to include, one per line. '
+                           'Basename of file will be used as the target repository '
                            'name and for the log file unless -n, --new-repo is set.')
     parser.add_option('-I', '--include', dest='file_pattern',
-                      help='Whitespace separated list of files to include. ' \
-                           'Appended to the pattern list specified by --include-file. ' \
+                      help='Whitespace separated list of files to include. '
+                           'Appended to the pattern list specified by --include-file. '
                            'Cannot be used when multiple --include-file set.')
     parser.add_option('-r', '--src-repo', dest='src_repo',
-                      help='Source repository to split. If this is local the script ' \
-                           'will use it as a reference and still attempt to retrieve ' \
+                      help='Source repository to split. If this is local the script '
+                           'will use it as a reference and still attempt to retrieve '
                            'from the original remote repo. To prevent querying of the '
                            'remote, remove the "origin" remote from the git repo.')
     parser.add_option('-n', '--new-repo', dest='target_repo',
-                      help='Sets the target repository name. Created at the given path ' \
-                           '(if value is a path), at the same level if just a name and ' \
+                      help='Sets the target repository name. Created at the given path '
+                           '(if value is a path), at the same level if just a name and '
                            'source repo is local or in the current working directory')
     parser.add_option('-f', '--force', action='store_true', default=False,
                       help='Force overwriting of the target path if it exists')
     parser.add_option('-b', '--branch', dest='branches', action='append',
-                      help='Name of branch to process. May be specified multiple times. ' \
+                      help='Name of branch to process. May be specified multiple times. '
                            'Default is to process all branches.')
     parser.add_option('-p', '--prune', action='store_true', default=False,
-                      help='Prune new repository of any branches that reference a commit ' \
+                      help='Prune new repository of any branches that reference a commit '
                            'that is reachable from any branch specified by "--keep-branch"')
     parser.add_option('-k', '--keep-branch', action="append", dest="keep_branches",
                       help='Name of branches to prevent from being pruned. Specify one for '
@@ -355,15 +362,14 @@ including merge commits, pruned and placed under a new repository.
             keep_branches = ["master"]
 
     local_clone = git.Repo(src_repo)
-    assert local_clone.bare == False
+    assert local_clone.bare is False
 
-    authors=None
+    authors = None
     if options.authors:
         if os.path.exists(options.authors):
             authors = os.path.abspath(options.authors)
         else:
-            parse.error("Non-existant authors file given '%s', please specify a valid file for option '-a'")
-
+            parser.error("Non-existant authors file given '%s', please specify a valid file for option '-a'")
 
     removed_files = []
     pool = ThreadPool(min(len(options.include_files), 6))
@@ -378,21 +384,20 @@ including merge commits, pruned and placed under a new repository.
     # finished
     pool.wait_completion()
 
-
-    if not options.ignore_removed:
+    if not options.ignore_removed and removed_files:
         # look to see if we included all files and directories in one of the splits
         list_sets = [set(list) for list in removed_files]
         removed_files = set.intersection(*list_sets)
 
         includes = []
         for include_file in options.include_files:
-            includes.extend([line.strip() \
-                                for line in open(include_file, 'r').read().split('\n') \
-                                    if line and line[0] != "#" ])
-        if options.file_pattern != None:
-            includes.extend([pattern.strip() \
-                                for pattern in options.file_pattern.split() if pattern
-                            ])
+            includes.extend([line.strip()
+                             for line in open(include_file, 'r').read().split('\n')
+                             if line and line[0] != "#"])
+        if options.file_pattern:
+            includes.extend([pattern.strip()
+                             for pattern in options.file_pattern.split() if pattern
+                             ])
 
         # get the unique includes
         includes = set(includes)
