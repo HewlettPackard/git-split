@@ -1,8 +1,11 @@
 # git_callback
 #
+# Copyright (C) 2008, 2009 Michael Trier and contributors
+#
 # module that modifies the git class method execute in the python-git software
 # to accept a callback as specified by the user.
 #
+# Can be replaced by using the as_process arg in more recent versions
 #
 
 import git

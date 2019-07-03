@@ -3,6 +3,9 @@
 # module to handle filtering of branches to remove files and eliminate
 # empty commits including merges. Based on cj-git-filter-branch from
 # https://github.com/pflanze/chj-bin/
+#
+# Copyright (c) 2008-2014 Christian Jaeger, published under the Apache
+# 2.0 license (see http://www.apache.org/licenses/)
 
 import logging
 
