@@ -8,31 +8,41 @@
 # Can be replaced by using the as_process arg in more recent versions
 #
 
-import git
-from git.errors import GitCommandError
+import io
+import os
 import subprocess
 import sys
 
+import git
+from git.exc import GitCommandError
 
-GIT_PYTHON_TRACE = git.cmd.GIT_PYTHON_TRACE
+GIT_PYTHON_TRACE = git.cmd.Git.GIT_PYTHON_TRACE
 ON_POSIX = 'posix' in sys.builtin_module_names
 
 extra = git.cmd.extra
-extra.update({'close_fds': ON_POSIX,
-              'bufsize': 1,
-             })
+extra.update({'close_fds': ON_POSIX, 'bufsize': 1})
 git.cmd.execute_kwargs = ('callback',) + git.cmd.execute_kwargs
 
-# override the default execute method of the git class with a custom one that permits
-# a callback to process the command output and provide feedback to the caller
+
+# override the default execute method of the git class with a custom one that
+# permits a callback to process the command output and provide feedback to the
+# caller
 def execute(self, command,
-                istream=None,
-                with_keep_cwd=False,
-                with_extended_output=False,
-                with_exceptions=True,
-                with_raw_output=False,
-                callback=None,
-                ):
+            istream=None,
+            with_extended_output=False,
+            with_exceptions=True,
+            as_process=False,
+            output_stream=None,
+            stdout_as_string=True,
+            kill_after_timeout=None,
+            with_stdout=True,
+            universal_newlines=False,
+            shell=None,
+            env=None,
+            max_chunk_size=io.DEFAULT_BUFFER_SIZE,
+            callback=None,
+            **subprocess_kwargs
+            ):
         """
         Handles executing the command on the shell and consumes and returns
         the returned information (stdout)
@@ -67,13 +77,13 @@ def execute(self, command,
         """
 
         if GIT_PYTHON_TRACE and not GIT_PYTHON_TRACE == 'full':
-            print ' '.join(command)
+            print(' '.join(command))
 
         # Allow the user to have the command executed in their working dir.
         if with_keep_cwd or self.git_dir is None:
             cwd = os.getcwd()
         else:
-            cwd=self.git_dir
+            cwd = self.git_dir
 
         # Start the process
         proc = subprocess.Popen(command,
@@ -107,17 +117,20 @@ def execute(self, command,
 
         if GIT_PYTHON_TRACE == 'full':
             if stderr_value:
-                print "%s -> %d: '%s' !! '%s'" % (command, status, stdout_value, stderr_value)
+                print("%s -> %d: '%s' !! '%s'" % (
+                    command, status, stdout_value, stderr_value)
+                )
             elif stdout_value:
-                print "%s -> %d: '%s'" % (command, status, stdout_value)
+                print("%s -> %d: '%s'" % (command, status, stdout_value))
             else:
-                print "%s -> %d" % (command, status)
+                print("%s -> %d" % (command, status))
 
         # Allow access to the command's status code
         if with_extended_output:
             return (status, stdout_value, stderr_value)
         else:
             return stdout_value
+
 
 # monkey patch the git.execute_process method
 git.cmd.Git.execute = execute

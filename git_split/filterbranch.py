@@ -15,10 +15,11 @@ class FilterBranch:
     tag_filter = '''cat'''
     index_filter = '''git ls-files -z | grep -z -v %s | xargs -0 --no-run-if-empty git rm --cached'''
     commit_filter = '''
+
 DEBUG_LVL=%d
 DEBUG_LVL=${DEBUG_LVL:-0}
 
-AUTHORS_FILE=%s
+AUTHORS_FILE="%s"
 
 function log_warn() {
     [ "${DEBUG_LVL}" -ge 3 -a "$*" != "" ] && echo "$*" >&2
